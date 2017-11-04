@@ -1,6 +1,7 @@
 from optparse import OptionParser
 
 import numpy as np
+from scipy import sparse
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
 
@@ -30,15 +31,17 @@ class CDN:
         """
 
         n_items, n_features = X.shape
-        yX = y.reshape((n_items, 1)) * X
+        if sparse.issparse(X):
+            yX = X.multiply(y.reshape((n_items, 1))).tocsr()
+        else:
+            yX = y.reshape((n_items, 1)) * X
         if init_w is None:
-            #self._w = np.random.randn(n_features)
             self._w = np.zeros(n_features)
         else:
             self._w = init_w
         self._R = np.sum(np.abs(self._w))
-        self._expits = expit(np.dot(yX, self._w))
-        self._exp_nyXw = np.exp(-np.dot(yX, self._w))
+        self._expits = 1.0 / (1.0 + np.exp(-yX.dot(self._w)))
+        self._exp_nyXw = np.exp(-yX.dot(self._w))
         self._f_val = self._compute_f(self._exp_nyXw, self._w)
         self._g = self._compute_gradients(yX)
 
@@ -62,7 +65,7 @@ class CDN:
     def pred_probs(self, X):
         n, p = X.shape
         probs = np.zeros([n, 2])
-        prob_pos = expit(np.dot(X, self._w))
+        prob_pos = expit(X.dot(self._w))
         probs[:, 1] = prob_pos
         probs[:, 0] = 1.0 - prob_pos
         return probs
@@ -81,7 +84,12 @@ class CDN:
         return running_abs_change, running_ls_steps
 
     def _update_one_coordinate(self, yX, j):
-        h = self._compute_hessian_element(yX, j)
+        n_items, n_features = yX.shape
+        if sparse.issparse(yX):
+            yX_j = np.array(yX[:, j].todense()).reshape((n_items, ))
+        else:
+            yX_j = yX[:, j]
+        h = self._compute_hessian_element(yX_j)
 
         if self._g[j] + 1.0 <= h * self._w[j]:
             d = -(self._g[j] + 1.0) / h
@@ -110,7 +118,7 @@ class CDN:
                 # remove the current weight from the stored 1-norm of weights
                 R_minus_w_j = self._R - np.abs(self._w[j])
                 # do line search
-                f_new, a, i, exp_nyXw = self._line_search(yX[:, j], j, d, self._w[j], R_minus_w_j, a, thresh)
+                f_new, a, i, exp_nyXw = self._line_search(yX_j, d, self._w[j], R_minus_w_j, a, thresh)
                 # store the updated values
                 self._f_val = f_new
                 self._w[j] += a * d
@@ -122,7 +130,7 @@ class CDN:
                 self._g = self._compute_gradients(yX)
         return a * d, i
 
-    def _line_search(self, yX_j, j, d, prev_w_j, base_R, a, thresh):
+    def _line_search(self, yX_j, d, prev_w_j, base_R, a, thresh):
         i = 0
 
         step = a * d
@@ -144,22 +152,22 @@ class CDN:
         return f_new, a, i, exp_nyXw
 
     def _compute_probs(self, yX):
-        return expit(np.dot(yX, self._w))
+        return 1.0 / (1.0 + np.exp(-yX.dot(self._w)))
 
     def _compute_f(self, exp_nyXw, w):
         return self._compute_L(exp_nyXw) + self._compute_R(w)
 
     def _compute_L(self, exp_nyXw):
-        return self._C * np.sum(np.log(1.0 + exp_nyXw), axis=0)
+        return self._C * np.sum(np.log(1.0 + exp_nyXw))
 
     def _compute_R(self, w):
         return np.sum(np.abs(w))
 
     def _compute_gradients(self, yX):
-        return self._C * np.dot((self._expits - 1.0), yX)
+        return self._C * yX.T.dot(self._expits - 1.0)
 
-    def _compute_hessian_element(self, yX, j):
-        return self._C * np.dot(yX[:, j] ** 2, self._expits * (1.0 - self._expits))
+    def _compute_hessian_element(self, yX_j):
+        return self._C * np.sum(yX_j ** 2 * self._expits * (1.0 - self._expits))
 
     def get_w(self):
         return self._w.copy()
@@ -172,6 +180,10 @@ def main():
                       help='Number of instances: default=%default')
     parser.add_option('-p', dest='p', default=50,
                       help='Number of features: default=%default')
+    parser.add_option('--sparse', action="store_true", dest="sparse", default=False,
+                      help='Generate sparse data for testing: default=%default')
+    parser.add_option('--nonlinear', action="store_true", dest="nonlinear", default=False,
+                      help='Generate nonlinear data for testing: default=%default')
     parser.add_option('--seed', dest='seed', default=None,
                       help='Random seed: default=%default')
     parser.add_option('--skl', action="store_true", dest="skl", default=False,
@@ -181,26 +193,32 @@ def main():
 
     (options, args) = parser.parse_args()
 
-    seed = options.seed
-    use_skl = options.skl
     n = int(options.n)
     p = int(options.p)
+    do_sparse = options.sparse
+    nonlinear = options.nonlinear
+    seed = options.seed
+    use_skl = options.skl
     verbose = int(options.verbose)
 
     if seed is not None:
         np.random.seed(int(seed))
 
-    #X = np.array(np.random.randint(low=0, high=2, size=(n, p)), dtype=np.float64)
-    X = np.random.randn(n, p)
+    X = np.array(np.random.randint(low=0, high=2, size=(n, p)), dtype=np.float64)
     beta = np.array(np.random.randn(p), dtype=np.float64) * np.random.randint(low=0, high=2, size=p)
     print(beta)
 
-    X2 = X**2
-    beta2 = np.array(np.random.randn(p), dtype=np.float64) * np.random.randint(low=0, high=2, size=p)
-    ps = expit(np.dot(X, beta) + np.dot(X2, beta2))
-
-    #ps = expit(np.dot(X, beta))
+    # make a non-linear problem to encourage line search
+    if nonlinear:
+        X2 = X**2
+        beta2 = np.array(np.random.randn(p), dtype=np.float64) * np.random.randint(low=0, high=2, size=p)
+        ps = expit(np.dot(X, beta) + np.dot(X2, beta2))
+    else:
+        ps = expit(np.dot(X, beta))
     y = np.random.binomial(p=ps, n=1, size=n)
+
+    if do_sparse:
+        X = sparse.csr_matrix(X)
 
     if use_skl:
         model = LogisticRegression(C=1.0, penalty='l1', fit_intercept=False)
@@ -210,13 +228,11 @@ def main():
         print(np.sum(np.abs(y - pred)) / float(n))
 
     else:
-        y_float = np.array(y, dtype=np.float64)
-        y_float[y == 0] = -1.0
+        y2 = y.copy()
+        y2[y == 0] = -1
 
         solver = CDN(C=1.0)
-        #w = np.array(model.coef_)
-        #w = w.reshape((p, ))
-        solver.fit(X, y_float, max_epochs=200, randomize=True, verbose=verbose)
+        solver.fit(X, y2, max_epochs=200, randomize=True, verbose=verbose)
         print(solver.get_w())
 
         pred_probs = solver.pred_probs(X)
