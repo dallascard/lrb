@@ -112,7 +112,7 @@ def main():
             print(solver.coef_)
             print(solver.intercept_)
 
-        pred_probs = solver.pred_proba(X)
+        pred_probs = solver.predict_proba(X)
         pred = np.argmax(pred_probs, axis=1)
         if verbose > 0:
             print(np.sum(np.abs(y - pred)) / float(n))
@@ -127,5 +127,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-

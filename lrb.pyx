@@ -141,7 +141,7 @@ class LogisticRegressionBounded:
     def predict(self, X):
         return np.array(X.dot(self.coef_[0]) + self.intercept_ > 0, dtype=int)
 
-    def pred_proba(self, X):
+    def predict_proba(self, X):
         n_items, n_features = X.shape
         if self._fit_intercept:
             X = sparse.hstack([np.ones((n_items, 1)), X])
