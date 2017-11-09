@@ -4,23 +4,23 @@ from optparse import OptionParser
 import numpy as np
 from scipy import sparse
 from scipy.special import expit
-from sklearn.linear_model import LogisticRegression
 
 from libc.math cimport exp
 from libc.math cimport log
 from libc.math cimport abs as c_abs
 
-class CDN:
 
-    def __init__(self, C=1.0, beta=0.9, sigma=0.01, lower=None, upper=None, do_elimination=True):
+class LogisticRegressionBounded:
+
+    def __init__(self, C=1.0, fit_intercept=False, lower=None, upper=None, do_elimination=True):
         self._C = C
-        self._beta = beta
-        self._sigma = sigma
         self._lower = lower
         self._upper = upper
+        self._fit_intercept = fit_intercept
         self._do_elimination = do_elimination
-
         self._w = None          # model weights
+        self.coef_ = None
+        self.intercept_ = 0.0        
         self._L = None          # loss
         self._R = None          # regularization penalty 
         self._exp_nyXw = None   # stored vector of exp(-yXw) values
@@ -29,12 +29,14 @@ class CDN:
         self._v = None          
         self._M = 0
 
+    def decision_function(self, X):
+        return X.dot(self.coef_[0]) + self.intercept_
 
-    def fit(self, X, y, tol=1e-5, min_epochs=2, max_epochs=200, init_w=None, verbose=0, randomize=False):
+    def fit(self, X, y, beta=0.9, sigma=0.01, tol=1e-5, min_epochs=2, max_epochs=200, init_coef=None, verbose=0, randomize=False):
         """
         Coordinate descent with Newton directions for L1-regularized logistic regression
         :param X: n x p feature matrix
-        :param y: vector of labels in {-1, +1}
+        :param y: vector of labels in {0, 1}
         :param max_iter:
         :return:
         """
@@ -42,6 +44,15 @@ class CDN:
         n_items, n_features = X.shape
         assert sparse.issparse(X)
 
+        # add an intercept term if desired
+        if self._fit_intercept:
+            X = sparse.hstack([np.ones((n_items, 1)), X])
+            n_features += 1
+
+        # change labels to {-1, +1}
+        y = np.array(y, dtype=np.int32)        
+        y[y==0] = -1
+        # premultiply y * X
         yX = X.multiply(y.reshape((n_items, 1))).tocsc()
 
         # convert sparse matrix to a set of vectors and indices
@@ -62,10 +73,11 @@ class CDN:
         yX_rows = np.array(yX_rows, dtype=np.int32)
         yX_vals = np.array(yX_vals)
 
-        if init_w is None:
+        if init_coef is None:
             self._w = np.zeros(n_features)
         else:
-            self._w = init_w            
+            self._w = init_coef.copy()
+            assert len(self._w) == n_features
 
         self._v = np.zeros(n_features)
         self._active = np.ones(n_features, dtype=np.int32)
@@ -81,7 +93,7 @@ class CDN:
             if randomize:
                 np.random.shuffle(order)
 
-            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._C, self._beta, self._sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, order, self._M, self._v, self._active)
+            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._C, beta, sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, order, self._M, self._v, self._active)
             self._L = L
             self._R = R
 
@@ -98,22 +110,33 @@ class CDN:
                 print("epoch %d, delta=%0.5f, rel_change=%0.5f, ls_steps=%d" % (k, delta, rel_change, ls_steps))
             if rel_change < tol and k >= min_epochs - 1:
                 if verbose > 0:
-                    print("relative change below tolerance; stoppping after %d epochs" % k)
-                return
+                    print("relative change below tolerance; stopping after %d epochs" % k)
+                break
 
-        if verbose > 0:
+        if k == max_epochs:
             print("Maximum epochs exceeded; stopping after %d epochs" % k)
 
-    def pred_probs(self, X):
-        n, p = X.shape
-        probs = np.zeros([n, 2])
+        if self._fit_intercept:
+            self.intercept_ = self._w[0]
+            self.coef_ = self._w[1:].reshape((1, n_features-1))
+        else:
+            self.intercept_ = 0
+            self.coef_ = self._w.reshape((1, n_features))
+
+
+    def predict(self, X):
+        return np.array(X.dot(self.coef_[0]) + self.intercept_ > 0, dtype=int)
+
+    def pred_proba(self, X):
+        n_items, n_features = X.shape
+        if self._fit_intercept:
+            X = sparse.hstack([np.ones((n_items, 1)), X])
+            n_features += 1
+        probs = np.zeros([n_items, 2])
         prob_pos = expit(X.dot(self._w))
         probs[:, 1] = prob_pos
         probs[:, 0] = 1.0 - prob_pos
         return probs
-
-    def get_w(self):
-        return self._w.copy()
 
 
 cdef sparse_update(int n_items, int n_features, double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] w, double lower, double upper, int[:] yX_j_starts, int[:] yX_j_lengths, int[:] yX_rows, double[:] yX_vals, int[:] order, double M, double[:] v, int[:] active):

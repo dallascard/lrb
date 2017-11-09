@@ -4,7 +4,8 @@ import numpy as np
 from scipy import sparse
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
-import cycdn
+
+import lrb
 
 
 def main():
@@ -16,8 +17,10 @@ def main():
                       help='Lower limit for weights: default=%default')
     parser.add_option('--upper', dest='upper', default=1000000.0,
                       help='Upper limit for weights: default=%default')
+    parser.add_option('--intercept', action="store_true", dest="intercept", default=False,
+                      help='Fit an intercept: default=%default')
     parser.add_option('--tol', dest='tol', default=1e-5,
-                      help='Tolerance for convergence (relative change in objective): default=%default')
+                      help='Tolerance for convergence (relative change in sum(abs(coef_))): default=%default')
     parser.add_option('--max_iter', dest='max_iter', default=200,
                       help='Maximum number of iterations: default=%default')
     parser.add_option('-n', dest='n', default=1000,
@@ -44,6 +47,7 @@ def main():
     do_elimination = options.elimination
     lower = float(options.lower)
     upper = float(options.upper)
+    fit_intercept = options.intercept
     tol = float(options.tol)
     max_iter = int(options.max_iter)
     n = int(options.n)
@@ -63,8 +67,13 @@ def main():
     X = np.array(np.random.binomial(p=1-sparsity_X, n=1, size=(n, p)), dtype=np.float64)
     beta_mask = np.array(np.random.binomial(p=1-sparsity_beta, n=1, size=p), dtype=np.float64)
     beta = np.array(np.random.randn(p), dtype=np.float64) * beta_mask
+    if fit_intercept:
+        bias = np.random.randn()
+    else:
+        bias = 0
     if verbose > 0:
         print(beta)
+        print(bias)
 
     # make a non-linear problem to encourage line search
     if nonlinear:
@@ -72,16 +81,18 @@ def main():
         beta2 = np.array(np.random.randn(p), dtype=np.float64) * np.random.randint(low=0, high=2, size=p)
         ps = expit(np.dot(X, beta) + np.dot(X2, beta2))
     else:
-        ps = expit(np.dot(X, beta))
+        ps = expit(np.dot(X, beta) + bias)
     y = np.random.binomial(p=ps, n=1, size=n)
 
     X = sparse.csc_matrix(X)
 
     if use_skl or use_both:
-        model = LogisticRegression(C=1.0, penalty='l1', fit_intercept=False, solver='liblinear', tol=tol, max_iter=max_iter, verbose=verbose)
+        model = LogisticRegression(C=1.0, penalty='l1', fit_intercept=fit_intercept, solver='liblinear', tol=tol, max_iter=max_iter, verbose=verbose)
         model.fit(X, y)
         if verbose > 0:
+            print()
             print(model.coef_)
+            print(model.intercept_)
         pred = model.predict(X)
         if verbose > 0:
             print(np.sum(np.abs(y - pred)) / float(n))
@@ -90,20 +101,24 @@ def main():
         y2 = y.copy()
         y2[y == 0] = -1
 
-        solver = cycdn.CDN(C=1.0, lower=lower, upper=upper, do_elimination=do_elimination)
+        solver = lrb.LogisticRegressionBounded(C=1.0, fit_intercept=fit_intercept, lower=lower, upper=upper, do_elimination=do_elimination)
         #solver.fit(X, y2, tol=1e-4, init_w=model.coef_[0], min_epochs=0, max_epochs=200, randomize=False, verbose=verbose)
         solver.fit(X, y2, tol=tol, max_epochs=max_iter, randomize=True, verbose=verbose)
         if verbose > 0:
-            print(solver.get_w())
+            print(solver.coef_)
+            print(solver.intercept_)
 
-        pred_probs = solver.pred_probs(X)
+        pred_probs = solver.pred_proba(X)
         pred = np.argmax(pred_probs, axis=1)
         if verbose > 0:
             print(np.sum(np.abs(y - pred)) / float(n))
 
     if use_both:
-        diff = np.abs(model.coef_[0] - solver.get_w())
+        diff = np.abs(model.coef_[0] - solver.coef_[0])
         print("Maximum weight difference from skl:", np.max(diff))
+        print("Intercept diff = ", np.abs(model.intercept_ - solver.intercept_))
+        print(model.predict(np.zeros((1, p))))
+        print(solver.predict(np.zeros((1, p))))
 
 
 if __name__ == '__main__':
