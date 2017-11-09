@@ -37,7 +37,17 @@ To add bounds on the weights, use the `lower` or `upper` keywords, e.g.
 model = lrb.LogisticRegression(lower=0)
 ```
 
+### Limitations
+
+This implementation currently only supports binary classification (not multi-class), and `X` must be passed as a scipy.sparse matrix (not dense). Also, only L1 regularization is implemented (not L2).
+
 Note that at the moment, the intercept is being regularized (as is the case in liblinear and scikit-learn). It is also being restricted by the bounds in the same way as the coefficients. I may change one or both of these in the future...
+
+### To do
+
+* handle dense data
+* remove bounds restriction on intercept
+* replace convergence test with something better
 
 ### References
 
