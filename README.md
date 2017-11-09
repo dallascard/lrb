@@ -8,6 +8,7 @@ The API closely resembles the scikit-learn implementation of [Logistic Regressio
 
 ### Requirements
 
+* python3
 * numpy
 * scipy 
 * cython
