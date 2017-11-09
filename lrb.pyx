@@ -14,8 +14,14 @@ class LogisticRegressionBounded:
 
     def __init__(self, C=1.0, fit_intercept=False, lower=None, upper=None, do_elimination=True):
         self._C = C
-        self._lower = lower
-        self._upper = upper
+        if lower is None:
+            self._lower = -np.inf
+        else:
+            self._lower = lower
+        if upper is None:
+            self._upper = np.inf
+        else:
+            self._upper = upper
         self._fit_intercept = fit_intercept
         self._do_elimination = do_elimination
         self._w = None          # model weights

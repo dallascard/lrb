@@ -13,9 +13,9 @@ def main():
     parser = OptionParser(usage=usage)
     parser.add_option('--elim', action="store_true", dest="elimination", default=False,
                       help='Do heuristic variable elimination: default=%default')
-    parser.add_option('--lower', dest='lower', default=-1000000.0,
+    parser.add_option('--lower', dest='lower', default=None,
                       help='Lower limit for weights: default=%default')
-    parser.add_option('--upper', dest='upper', default=1000000.0,
+    parser.add_option('--upper', dest='upper', default=None,
                       help='Upper limit for weights: default=%default')
     parser.add_option('--intercept', action="store_true", dest="intercept", default=False,
                       help='Fit an intercept: default=%default')
@@ -45,8 +45,13 @@ def main():
     (options, args) = parser.parse_args()
 
     do_elimination = options.elimination
-    lower = float(options.lower)
-    upper = float(options.upper)
+    lower = options.lower
+    if lower is not None:
+        lower = float(lower)
+    upper = options.upper
+    if upper is not None:
+        upper = float(upper)
+    print(lower, upper)
     fit_intercept = options.intercept
     tol = float(options.tol)
     max_iter = int(options.max_iter)
