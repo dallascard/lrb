@@ -5,6 +5,10 @@ from scipy import sparse
 from scipy.special import expit
 from sklearn.linear_model import LogisticRegression
 
+"""
+NOTE: this python code was used in development and does not use cython. However, it is ver slow, and not up to date
+ with all of the options available in the cython code (lrb.pyc).
+"""
 
 # deal with the @profile wrappers below
 try:
