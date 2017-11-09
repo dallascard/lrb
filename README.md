@@ -42,7 +42,7 @@ Note that at the moment, the intercept is being regularized (as is the case in l
 ### References
 
 
-* Yuan et al. A Comparison of Optimization Methods and Software for
-Large-scale L1-regularized Linear Classification. JMLR 11 (2010).
-* Yuan et al. An Improved GLMNET for L1-regularized Logistic
-Regression. JLMR 13 (2012).
+* Yuan et al. [A Comparison of Optimization Methods and Software for
+Large-scale L1-regularized Linear Classification](http://www.csie.ntu.edu.tw/~cjlin/papers/l1.pdf). JMLR 11 (2010).
+* Yuan et al. [An Improved GLMNET for L1-regularized Logistic
+Regression](https://www.csie.ntu.edu.tw/~cjlin/papers/l1_glmnet/long-glmnet.pdf). JLMR 13 (2012).
