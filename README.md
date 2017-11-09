@@ -42,7 +42,7 @@ model = lrb.LogisticRegression(lower=0)
 
 This implementation currently only supports binary classification (not multi-class), and `X` must be passed as a scipy.sparse matrix (not dense). Also, only L1 regularization is implemented (not L2).
 
-Note that at the moment, the intercept is being regularized (as is the case in liblinear and scikit-learn). It is also being restricted by the bounds in the same way as the coefficients. I may change one or both of these in the future...
+Note that at the moment, the intercept is being regularized (as is the case in liblinear and scikit-learn). I may change this in the future...
 
 ### To do
 

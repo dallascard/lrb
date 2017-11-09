@@ -107,7 +107,7 @@ class LogisticRegressionBounded:
             if randomize:
                 np.random.shuffle(order)
 
-            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._C, beta, sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, sample_weights, order, self._M, self._v, self._active)
+            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._fit_intercept, self._C, beta, sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, sample_weights, order, self._M, self._v, self._active)
             self._L = L
             self._R = R
 
@@ -131,10 +131,10 @@ class LogisticRegressionBounded:
             print("Maximum epochs exceeded; stopping after %d epochs" % k)
 
         if self._fit_intercept:
-            self.intercept_ = self._w[0]
+            self.intercept_ = [self._w[0]]
             self.coef_ = self._w[1:].reshape((1, n_features-1))
         else:
-            self.intercept_ = 0
+            self.intercept_ = [0]
             self.coef_ = self._w.reshape((1, n_features))
 
 
@@ -153,7 +153,7 @@ class LogisticRegressionBounded:
         return probs
 
 
-cdef sparse_update(int n_items, int n_features, double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] w, double lower, double upper, int[:] yX_j_starts, int[:] yX_j_lengths, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, int[:] order, double M, double[:] v, int[:] active):
+cdef sparse_update(int n_items, int n_features, int fit_intercept, double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] w, double lower, double upper, int[:] yX_j_starts, int[:] yX_j_lengths, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, int[:] order, double M, double[:] v, int[:] active):
 
         cdef int i = 0
         cdef int j
@@ -163,6 +163,7 @@ cdef sparse_update(int n_items, int n_features, double C, double beta, double si
         cdef int ls_steps
         cdef double change
         cdef int is_active
+        cdef int is_bias = 0
         while i < n_items:
             exp_nyXw_new[i] = exp_nyXw[i]
             i += 1
@@ -171,7 +172,12 @@ cdef sparse_update(int n_items, int n_features, double C, double beta, double si
         while i < n_features:
             j = order[i]
             if active[j] > 0:
-                ls_steps, change, L, R, v_j, is_active = sparse_update_one_coordinate(C, beta, sigma, L, R, probs, exp_nyXw, exp_nyXw_new, w[j], lower, upper, yX_j_starts[j], yX_j_lengths[j], yX_rows, yX_vals, sample_weights, M)
+                # note if this is the bias term or not, to avoid bounding it
+                if j == 0 and fit_intercept:
+                    is_bias = 1
+                else:
+                    is_bias = 0
+                ls_steps, change, L, R, v_j, is_active = sparse_update_one_coordinate(C, beta, sigma, L, R, probs, exp_nyXw, exp_nyXw_new, w[j], lower, upper, yX_j_starts[j], yX_j_lengths[j], yX_rows, yX_vals, sample_weights, M, is_bias)
                 if c_abs(change) > 0:
                     w[j] += change
                 v[j] = v_j
@@ -185,7 +191,7 @@ cdef sparse_update(int n_items, int n_features, double C, double beta, double si
 
 
 
-cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] exp_nyXw_new, double w_j, double lower, double upper, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, double M):
+cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] exp_nyXw_new, double w_j, double lower, double upper, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, double M, int is_bias):
 
     cdef int index
     cdef int i
@@ -234,13 +240,14 @@ cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L,
     else:
         d = -w_j
 
-    # check upper and lower limits, and set max step accordingly
-    if w_j + d < lower:
-        diff = lower - w_j
-        a = diff / d
-    if w_j + d > upper:
-        diff = upper - w_j
-        a = diff / d
+    # check upper and lower limits (except for bias), and set max step accordingly
+    if is_bias==0:
+        if w_j + d < lower:
+            diff = lower - w_j
+            a = diff / d
+        if w_j + d > upper:
+            diff = upper - w_j
+            a = diff / d
 
     # unless we've hit a bound, use line search to find how far to move in this direction
     if a > 0 and c_abs(d) > 0:
