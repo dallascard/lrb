@@ -31,8 +31,8 @@ def main():
                       help='Expected proportion of zero entries in X: default=%default')
     parser.add_option('--sparsity_beta', dest='sparsity_beta', default=0.5,
                       help='Expected proportion of zero entries in beta: default=%default')
-    parser.add_option('--nonlinear', action="store_true", dest="nonlinear", default=False,
-                      help='Generate nonlinear data for testing: default=%default')
+    parser.add_option('--weights', action="store_true", dest="weights", default=False,
+                      help='Generate random sample weights: default=%default')
     parser.add_option('--seed', dest='seed', default=None,
                       help='Random seed: default=%default')
     parser.add_option('--skl', action="store_true", dest="skl", default=False,
@@ -54,7 +54,7 @@ def main():
     p = int(options.p)
     sparsity_X = float(options.sparsity_X)
     sparsity_beta = float(options.sparsity_beta)
-    nonlinear = options.nonlinear
+    weights = options.weights
     seed = options.seed
     use_skl = options.skl
     use_both = options.both
@@ -75,20 +75,19 @@ def main():
         print(beta)
         print(bias)
 
-    # make a non-linear problem to encourage line search
-    if nonlinear:
-        X2 = X**2
-        beta2 = np.array(np.random.randn(p), dtype=np.float64) * np.random.randint(low=0, high=2, size=p)
-        ps = expit(np.dot(X, beta) + np.dot(X2, beta2))
-    else:
-        ps = expit(np.dot(X, beta) + bias)
+    ps = expit(np.dot(X, beta) + bias)
     y = np.random.binomial(p=ps, n=1, size=n)
 
     X = sparse.csc_matrix(X)
 
+    if weights:
+        sample_weights=np.random.rand(n) + 0.5
+    else:
+        sample_weights=None
+
     if use_skl or use_both:
         model = LogisticRegression(C=1.0, penalty='l1', fit_intercept=fit_intercept, solver='liblinear', tol=tol, max_iter=max_iter, verbose=verbose)
-        model.fit(X, y)
+        model.fit(X, y, sample_weight=sample_weights)
         if verbose > 0:
             print()
             print(model.coef_)
@@ -103,7 +102,7 @@ def main():
 
         solver = lrb.LogisticRegressionBounded(C=1.0, fit_intercept=fit_intercept, lower=lower, upper=upper, do_elimination=do_elimination)
         #solver.fit(X, y2, tol=1e-4, init_w=model.coef_[0], min_epochs=0, max_epochs=200, randomize=False, verbose=verbose)
-        solver.fit(X, y2, tol=tol, max_epochs=max_iter, randomize=True, verbose=verbose)
+        solver.fit(X, y2, sample_weight=sample_weights, tol=tol, max_epochs=max_iter, randomize=True, verbose=verbose)
         if verbose > 0:
             print(solver.coef_)
             print(solver.intercept_)

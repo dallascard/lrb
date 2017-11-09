@@ -32,7 +32,7 @@ class LogisticRegressionBounded:
     def decision_function(self, X):
         return X.dot(self.coef_[0]) + self.intercept_
 
-    def fit(self, X, y, beta=0.9, sigma=0.01, tol=1e-5, min_epochs=2, max_epochs=200, init_coef=None, verbose=0, randomize=False):
+    def fit(self, X, y, sample_weight=None, beta=0.9, sigma=0.01, tol=1e-5, min_epochs=2, max_epochs=200, init_w=None, verbose=0, randomize=False):
         """
         Coordinate descent with Newton directions for L1-regularized logistic regression
         :param X: n x p feature matrix
@@ -48,6 +48,12 @@ class LogisticRegressionBounded:
         if self._fit_intercept:
             X = sparse.hstack([np.ones((n_items, 1)), X])
             n_features += 1
+
+        if sample_weight is None:
+            sample_weights = np.ones(n_items)
+        else:
+            sample_weights = sample_weight
+            assert len(sample_weights) == n_items
 
         # change labels to {-1, +1}
         y = np.array(y, dtype=np.int32)        
@@ -73,19 +79,21 @@ class LogisticRegressionBounded:
         yX_rows = np.array(yX_rows, dtype=np.int32)
         yX_vals = np.array(yX_vals)
 
-        if init_coef is None:
+        # initialize coefficients
+        if init_w is None:
             self._w = np.zeros(n_features)
         else:
-            self._w = init_coef.copy()
+            self._w = init_w.copy()
             assert len(self._w) == n_features
 
+        # initialize all remaining variables
         self._v = np.zeros(n_features)
         self._active = np.ones(n_features, dtype=np.int32)
         self._M = 0
         self._exp_nyXw = np.exp(-yX.dot(self._w))
         self._probs = 1.0 / (1.0 + self._exp_nyXw)
         self._R = np.sum(np.abs(self._w))
-        self._L = self._C * np.sum(np.log(1.0 + self._exp_nyXw))
+        self._L = self._C * np.sum(sample_weights * np.log(1.0 + self._exp_nyXw))
 
         order = np.array(np.arange(n_features), dtype=np.int32)
 
@@ -93,7 +101,7 @@ class LogisticRegressionBounded:
             if randomize:
                 np.random.shuffle(order)
 
-            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._C, beta, sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, order, self._M, self._v, self._active)
+            delta, ls_steps, L, R = sparse_update(n_items, n_features, self._C, beta, sigma, self._L, self._R, self._probs, self._exp_nyXw, self._w, self._lower, self._upper, yX_j_starts, yX_j_lengths, yX_rows, yX_vals, sample_weights, order, self._M, self._v, self._active)
             self._L = L
             self._R = R
 
@@ -139,7 +147,7 @@ class LogisticRegressionBounded:
         return probs
 
 
-cdef sparse_update(int n_items, int n_features, double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] w, double lower, double upper, int[:] yX_j_starts, int[:] yX_j_lengths, int[:] yX_rows, double[:] yX_vals, int[:] order, double M, double[:] v, int[:] active):
+cdef sparse_update(int n_items, int n_features, double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] w, double lower, double upper, int[:] yX_j_starts, int[:] yX_j_lengths, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, int[:] order, double M, double[:] v, int[:] active):
 
         cdef int i = 0
         cdef int j
@@ -157,7 +165,7 @@ cdef sparse_update(int n_items, int n_features, double C, double beta, double si
         while i < n_features:
             j = order[i]
             if active[j] > 0:
-                ls_steps, change, L, R, v_j, is_active = sparse_update_one_coordinate(C, beta, sigma, L, R, probs, exp_nyXw, exp_nyXw_new, w[j], lower, upper, yX_j_starts[j], yX_j_lengths[j], yX_rows, yX_vals, M)
+                ls_steps, change, L, R, v_j, is_active = sparse_update_one_coordinate(C, beta, sigma, L, R, probs, exp_nyXw, exp_nyXw_new, w[j], lower, upper, yX_j_starts[j], yX_j_lengths[j], yX_rows, yX_vals, sample_weights, M)
                 if c_abs(change) > 0:
                     w[j] += change
                 v[j] = v_j
@@ -171,7 +179,7 @@ cdef sparse_update(int n_items, int n_features, double C, double beta, double si
 
 
 
-cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] exp_nyXw_new, double w_j, double lower, double upper, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double M):
+cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L, double R, double[:] probs, double[:] exp_nyXw, double[:] exp_nyXw_new, double w_j, double lower, double upper, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, double M):
 
     cdef int index
     cdef int i
@@ -187,8 +195,8 @@ cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L,
     cdef double base_R = R
 
     # compute the gradient and Hessian elements
-    cdef double g = compute_grad_j(C, probs,  yX_j_start, yX_j_length, yX_rows, yX_vals)
-    cdef double h = compute_hessian_element(C, probs, yX_j_start, yX_j_length, yX_rows, yX_vals)
+    cdef double g = compute_grad_j(C, probs,  yX_j_start, yX_j_length, yX_rows, yX_vals, sample_weights)
+    cdef double h = compute_hessian_element(C, probs, yX_j_start, yX_j_length, yX_rows, yX_vals ,sample_weights)
 
     if M > 0:
         # if w is 0 and the gradient is small, eliminate the variable from the active set
@@ -240,12 +248,12 @@ cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L,
         i = yX_j_start
         while i < yX_j_start + yX_j_length:
             index = yX_rows[i]
-            base_L = base_L - C * log(1.0 + exp_nyXw[index])
+            base_L = base_L - C * sample_weights[index] * log(1.0 + exp_nyXw[index])
             i += 1
 
         # do line search
         #f_new, a, i, exp_nyXw = self._line_search(yX_j, d, self._w[j], R_minus_w_j, a, thresh)
-        line_steps = sparse_line_search(C, g, h, f_val, exp_nyXw, exp_nyXw_new, yX_j_start, yX_j_length, yX_rows, yX_vals, d, w_j, base_L, base_R, a, beta, thresh)
+        line_steps = sparse_line_search(C, g, h, f_val, exp_nyXw, exp_nyXw_new, yX_j_start, yX_j_length, yX_rows, yX_vals, sample_weights, d, w_j, base_L, base_R, a, beta, thresh)
         a = a * (beta ** line_steps)
 
         w_j += a * d
@@ -256,7 +264,7 @@ cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L,
         i = yX_j_start
         while i < yX_j_start + yX_j_length:
             index = yX_rows[i]
-            base_L = base_L + C * log(1.0 + exp_nyXw_new[index])
+            base_L = base_L + C * sample_weights[index] * log(1.0 + exp_nyXw_new[index])
             i += 1
             # also update the relevant values of exp(-yXw) and 1/(1+exp(-yXw))
             exp_nyXw[index] = exp_nyXw_new[index]
@@ -264,28 +272,27 @@ cdef sparse_update_one_coordinate(double C, double beta, double sigma, double L,
 
     return line_steps, a * d, base_L, base_R, v_j, active
 
-
-cdef double compute_hessian_element(double C, double[:] probs, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals):
-    cdef double h = 0.0
-    cdef int i = yX_j_start
-    cdef int index
-    while (i < yX_j_start + yX_j_length):
-        index = yX_rows[i]
-        h += probs[index] * (1.0 - probs[index]) * yX_vals[i] * yX_vals[i]
-        i += 1
-    return h * C
-
-cdef double compute_grad_j(double C, double[:] probs, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals):
+cdef double compute_grad_j(double C, double[:] probs, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights):
     cdef double g = 0.0
     cdef int i = yX_j_start
     cdef int index
     while (i < yX_j_start + yX_j_length):
         index = yX_rows[i]
-        g += yX_vals[i] * (probs[index] - 1.0)
+        g += sample_weights[index] * yX_vals[i] * (probs[index] - 1.0)
         i += 1
     return g * C
 
-cdef double sparse_line_search(double C, double g, double h, double f_val, double[:] exp_nyXw_orig, double[:] exp_nyXw, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double d, double prev_w_j, double base_L, double base_R, double a, double beta, double thresh):
+cdef double compute_hessian_element(double C, double[:] probs, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights):
+    cdef double h = 0.0
+    cdef int i = yX_j_start
+    cdef int index
+    while (i < yX_j_start + yX_j_length):
+        index = yX_rows[i]
+        h += sample_weights[index] * probs[index] * (1.0 - probs[index]) * yX_vals[i] * yX_vals[i]
+        i += 1
+    return h * C
+
+cdef double sparse_line_search(double C, double g, double h, double f_val, double[:] exp_nyXw_orig, double[:] exp_nyXw, int yX_j_start, int yX_j_length, int[:] yX_rows, double[:] yX_vals, double[:] sample_weights, double d, double prev_w_j, double base_L, double base_R, double a, double beta, double thresh):
     cdef line_steps = 0
     cdef double orig_a = a
     cdef double step = a * d
@@ -299,7 +306,7 @@ cdef double sparse_line_search(double C, double g, double h, double f_val, doubl
     while i < yX_j_start + yX_j_length:
         index = yX_rows[i]
         exp_nyXw[index] = exp_nyXw_orig[index] * exp(-step * yX_vals[i])
-        L = L + C * log(1.0 + exp_nyXw[index])
+        L = L + C * sample_weights[index] * log(1.0 + exp_nyXw[index])
         i += 1
 
     R = base_R + abs(w_j)
@@ -317,7 +324,7 @@ cdef double sparse_line_search(double C, double g, double h, double f_val, doubl
         while i < yX_j_start + yX_j_length:
             index = yX_rows[i]
             exp_nyXw[index] = exp_nyXw_orig[index] * exp(-step * yX_vals[i])
-            L = L + C * log(1.0 + exp_nyXw[index])
+            L = L + C * sample_weights[index] * log(1.0 + exp_nyXw[index])
             i += 1
 
         R = base_R + abs(w_j)
